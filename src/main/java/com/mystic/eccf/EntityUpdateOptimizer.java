@@ -1,46 +1,42 @@
 package com.mystic.eccf;
 
-import com.mystic.eccf.config.ECCFConfig;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityHanging;
-import net.minecraft.entity.EntityLiving;
-import net.minecraft.entity.boss.EntityDragon;
-import net.minecraft.entity.boss.EntityWither;
-import net.minecraft.entity.item.EntityBoat;
-import net.minecraft.entity.item.EntityEnderCrystal;
-import net.minecraft.entity.item.EntityItem;
-import net.minecraft.entity.item.EntityMinecart;
-import net.minecraft.entity.monster.EntityGolem;
-import net.minecraft.entity.player.EntityPlayer;
-import net.minecraft.entity.projectile.*;
-import net.minecraft.util.ClassInheritanceMultiMap;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkPos;
+import java.util.*;
+
+import net.minecraft.entity.*;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.util.MathHelper;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.IChunkProvider;
 import net.minecraft.world.gen.ChunkProviderServer;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.common.config.Configuration;
 import net.minecraftforge.event.entity.EntityJoinWorldEvent;
-import net.minecraftforge.fml.common.FMLCommonHandler;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.common.event.FMLInitializationEvent;
-import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
-import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
-import net.minecraftforge.fml.common.gameevent.TickEvent;
-import net.minecraftforge.fml.common.registry.EntityRegistry;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import com.falsepattern.lib.compat.ChunkPos;
+import com.falsepattern.lib.internal.proxy.CommonProxy;
+import com.mystic.eccf.config.ECCFConfig;
 
-@Mod(modid = "eccf")
+import cpw.mods.fml.common.FMLCommonHandler;
+import cpw.mods.fml.common.Mod;
+import cpw.mods.fml.common.SidedProxy;
+import cpw.mods.fml.common.event.FMLInitializationEvent;
+import cpw.mods.fml.common.event.FMLPreInitializationEvent;
+import cpw.mods.fml.common.eventhandler.SubscribeEvent;
+import cpw.mods.fml.common.gameevent.TickEvent;
+import cpw.mods.fml.common.registry.EntityRegistry;
+
+@Mod(modid = Tags.MODID, version = Tags.VERSION, name = Tags.MODNAME, acceptedMinecraftVersions = Tags.MCVERSION)
 public class EntityUpdateOptimizer {
 
     // The maximum number of entities in a chunk before optimization is triggered
     private Map<ChunkPos, Integer> entityCountMap;
     private Set<Integer> pendingRemovalEntities;
+    @SidedProxy(clientSide = Tags.CLIENTPROXY, serverSide = Tags.SERVERPROXY)
+    public static CommonProxy proxy;
+    public static Configuration config;
+    public static EntityUpdateOptimizer instance;
 
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
@@ -56,14 +52,14 @@ public class EntityUpdateOptimizer {
 
     @SubscribeEvent
     public void onEntityJoinWorld(EntityJoinWorldEvent event) {
-        Entity entity = event.getEntity();
-        World world = entity.getEntityWorld();
+        Entity entity = event.entity;
+        World world = entity.worldObj;
 
         if (!world.isRemote && shouldOptimizeEntity(entity) && !entity.isDead) {
             ChunkPos chunkPos = getChunkPos(entity);
             int entityCount = getEntityCountInChunk(chunkPos, (WorldServer) world);
 
-            if (entityCount > ECCFConfig.maxEntitiesPerChunk.get()) {
+            if (entityCount > ECCFConfig.maxEntitiesPerChunk) {
                 unloadAndReloadChunk(chunkPos, (WorldServer) world);
                 entity.setDead();
                 pendingRemovalEntities.add(entity.getEntityId());
@@ -74,13 +70,21 @@ public class EntityUpdateOptimizer {
     }
 
     private boolean shouldOptimizeEntity(Entity entity) {
-        return entity instanceof EntityLiving && !(entity instanceof EntityDragon || entity instanceof EntityWither || entity instanceof EntityGolem);
+        String entityId = EntityList.getStringFromID(entity.getEntityId());
+
+        if (entityId != null) {
+            return entity instanceof EntityLiving && !ECCFConfig.entityBlacklistIds.contains(entityId);
+        }
+
+        return false;
     }
 
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase == TickEvent.Phase.START) {
-            for (WorldServer worldServer : FMLCommonHandler.instance().getMinecraftServerInstance().worlds) {
+            MinecraftServer minecraftServer = FMLCommonHandler.instance()
+                .getMinecraftServerInstance();
+            for (WorldServer worldServer : minecraftServer.worldServers) {
                 if (!worldServer.isRemote) {
                     for (Integer entityId : pendingRemovalEntities) {
                         Entity entity = worldServer.getEntityByID(entityId);
@@ -101,37 +105,37 @@ public class EntityUpdateOptimizer {
     }
 
     private void removeEntityFromTracker(Entity entity, WorldServer worldServer, ChunkPos chunkPos) {
-        EntityRegistry.EntityRegistration registration = EntityRegistry.instance().lookupModSpawn(entity.getClass(), true);
+        EntityRegistry.EntityRegistration registration = EntityRegistry.instance()
+            .lookupModSpawn(entity.getClass(), true);
         if (registration != null) {
-            ChunkProviderServer chunkProvider = worldServer.getChunkProvider();
-            Chunk chunk = chunkProvider.getLoadedChunk(chunkPos.x, chunkPos.z);
+            IChunkProvider chunkProvider = worldServer.getChunkProvider();
+            Chunk chunk = chunkProvider.provideChunk(chunkPos.x, chunkPos.z);
 
             if (chunk != null) {
                 chunk.removeEntity(entity);
-                worldServer.getEntityTracker().untrack(entity);
+                worldServer.getEntityTracker()
+                    .removeEntityFromAllTrackingPlayers(entity);
             }
         }
     }
 
     private ChunkPos getChunkPos(Entity entity) {
-        BlockPos entityPos = entity.getPosition();
-        int chunkX = entityPos.getX() >> 4;
-        int chunkZ = entityPos.getZ() >> 4;
+        int chunkX = MathHelper.floor_double(entity.posX) >> 4;
+        int chunkZ = MathHelper.floor_double(entity.posZ) >> 4;
         return new ChunkPos(chunkX, chunkZ);
     }
 
     private int getEntityCountInChunk(ChunkPos chunkPos, WorldServer world) {
-        Chunk chunk = world.getChunkProvider().getLoadedChunk(chunkPos.x, chunkPos.z);
+        int chunkX = chunkPos.x;
+        int chunkZ = chunkPos.z;
+
+        Chunk chunk = world.getChunkFromChunkCoords(chunkX, chunkZ);
         if (chunk != null) {
             int entityCount = 0;
 
-            ClassInheritanceMultiMap<Entity> entityList = chunk.getEntityLists()[0];
-
-            entityCount = entityList.size();
-
-            for (Entity entity : entityList) {
-                if (!shouldOptimizeEntity(entity) && !entity.isDead) {
-                    entityCount--;
+            for (Object entity : chunk.entityLists[0]) {
+                if (entity instanceof Entity) {
+                    entityCount++;
                 }
             }
 
@@ -141,12 +145,23 @@ public class EntityUpdateOptimizer {
     }
 
     private void unloadAndReloadChunk(ChunkPos chunkPos, WorldServer world) {
-        ChunkProviderServer chunkProvider = world.getChunkProvider();
-        Chunk chunk = chunkProvider.getLoadedChunk(chunkPos.x, chunkPos.z);
 
-        if (chunk != null) {
-            chunkProvider.queueUnload(chunk);
-            chunkProvider.loadChunk(chunkPos.x, chunkPos.z);
+        ChunkProviderServer provider = (ChunkProviderServer) world.getChunkProvider();
+
+        int x = chunkPos.x;
+        int z = chunkPos.z;
+
+        if (provider.chunkExists(x, z)) {
+
+            Chunk chunk = provider.provideChunk(x, z);
+
+            if (chunk != null) {
+                chunk.onChunkUnload();
+            }
+
+            provider.loadChunk(x, z);
+
         }
+
     }
 }
