@@ -2,6 +2,8 @@ package com.mystic.eccf;
 
 import java.util.*;
 
+import com.mystic.eccf.config.ECCFeccfConfig;
+import com.mystic.eccf.proxy.CommonProxy;
 import net.minecraft.entity.*;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.MathHelper;
@@ -15,8 +17,6 @@ import net.minecraftforge.common.config.Configuration;
 import net.minecraftforge.event.entity.EntityJoinWorldEvent;
 
 import com.falsepattern.lib.compat.ChunkPos;
-import com.falsepattern.lib.internal.proxy.CommonProxy;
-import com.mystic.eccf.config.ECCFConfig;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.Mod;
@@ -29,7 +29,7 @@ import cpw.mods.fml.common.registry.EntityRegistry;
 
 @Mod(modid = Tags.MODID, version = Tags.VERSION, name = Tags.MODNAME, acceptedMinecraftVersions = Tags.MCVERSION)
 public class EntityUpdateOptimizer {
-
+    private static Map entityIdMap;
     // The maximum number of entities in a chunk before optimization is triggered
     private Map<ChunkPos, Integer> entityCountMap;
     private Set<Integer> pendingRemovalEntities;
@@ -47,7 +47,9 @@ public class EntityUpdateOptimizer {
 
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
+
         MinecraftForge.EVENT_BUS.register(this);
+        entityIdMap = EntityList.stringToClassMapping;
     }
 
     @SubscribeEvent
@@ -59,7 +61,7 @@ public class EntityUpdateOptimizer {
             ChunkPos chunkPos = getChunkPos(entity);
             int entityCount = getEntityCountInChunk(chunkPos, (WorldServer) world);
 
-            if (entityCount > ECCFConfig.maxEntitiesPerChunk) {
+            if (entityCount > ECCFeccfConfig.maxEntitiesPerChunk) {
                 unloadAndReloadChunk(chunkPos, (WorldServer) world);
                 entity.setDead();
                 pendingRemovalEntities.add(entity.getEntityId());
@@ -70,14 +72,25 @@ public class EntityUpdateOptimizer {
     }
 
     private boolean shouldOptimizeEntity(Entity entity) {
-        String entityId = EntityList.getStringFromID(entity.getEntityId());
+        int entityId = EntityList.getEntityID(entity);
 
-        if (entityId != null) {
-            return entity instanceof EntityLiving && !ECCFConfig.entityBlacklistIds.contains(entityId);
+        if (entityIdMap.containsKey(entityId)) {
+            String blacklistEntityName = (String) entityIdMap.get(entityId);
+
+            if (entity instanceof EntityLiving) {
+                for (String blacklistId : ECCFeccfConfig.entityBlacklistIds) {
+                    if (blacklistId.equals(blacklistEntityName)) {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
         }
 
         return false;
     }
+
 
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
