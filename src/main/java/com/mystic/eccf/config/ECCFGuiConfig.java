@@ -1,10 +1,10 @@
 package com.mystic.eccf.config;
 
-import com.mystic.eccf.Tags;
 import net.minecraft.client.gui.GuiScreen;
 
 import com.falsepattern.lib.config.ConfigException;
 import com.falsepattern.lib.config.SimpleGuiConfig;
+import com.mystic.eccf.Tags;
 
 public class ECCFGuiConfig extends SimpleGuiConfig {
 

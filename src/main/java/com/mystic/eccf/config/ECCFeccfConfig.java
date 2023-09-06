@@ -15,7 +15,7 @@ public class ECCFeccfConfig {
     @Config.RequiresWorldRestart
     public static int maxEntitiesPerChunk;
     @Config.Comment("Here is a blacklist to make sure that mobs in the blacklist can spawn without limie.")
-    @Config.DefaultStringList({ "WitherBoss", "EnderDragon" ,"SnowMan"})
+    @Config.DefaultStringList({ "WitherBoss", "EnderDragon", "SnowMan" })
     public static String[] entityBlacklistIds;
 
 }

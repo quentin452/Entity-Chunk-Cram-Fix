@@ -2,21 +2,17 @@ package com.mystic.eccf;
 
 import java.util.*;
 
-import com.mystic.eccf.config.ECCFeccfConfig;
-import com.mystic.eccf.proxy.CommonProxy;
 import net.minecraft.entity.*;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.MathHelper;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
-import net.minecraft.world.chunk.IChunkProvider;
-import net.minecraft.world.gen.ChunkProviderServer;
-import net.minecraftforge.common.MinecraftForge;
-import net.minecraftforge.common.config.Configuration;
 import net.minecraftforge.event.entity.EntityJoinWorldEvent;
 
 import com.falsepattern.lib.compat.ChunkPos;
+import com.mystic.eccf.config.ECCFeccfConfig;
+import com.mystic.eccf.proxy.CommonProxy;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.Mod;
@@ -29,27 +25,38 @@ import cpw.mods.fml.common.registry.EntityRegistry;
 
 @Mod(modid = Tags.MODID, version = Tags.VERSION, name = Tags.MODNAME, acceptedMinecraftVersions = Tags.MCVERSION)
 public class EntityUpdateOptimizer {
-    private static Map entityIdMap;
-    // The maximum number of entities in a chunk before optimization is triggered
+
+    private static Map<Integer, Class<? extends Entity>> entityIdMap;
+    // Le nombre maximum d'entités dans un chunk avant que l'optimisation ne soit déclenchée
     private Map<ChunkPos, Integer> entityCountMap;
     private Set<Integer> pendingRemovalEntities;
     @SidedProxy(clientSide = Tags.CLIENTPROXY, serverSide = Tags.SERVERPROXY)
     public static CommonProxy proxy;
-    public static Configuration config;
     public static EntityUpdateOptimizer instance;
 
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
-        // Pre-initialization code for your mod
+        // Code de pré-initialisation pour votre mod
         entityCountMap = new HashMap<>();
         pendingRemovalEntities = new HashSet<>();
     }
 
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
+        FMLCommonHandler.instance()
+            .bus()
+            .register(this);
 
-        MinecraftForge.EVENT_BUS.register(this);
-        entityIdMap = EntityList.stringToClassMapping;
+        entityIdMap = new HashMap<Integer, Class<? extends Entity>>();
+
+        // Parcourez tous les ID d'entités possibles
+        for (int entityId = 0; entityId < 32000; entityId++) {
+            Class<? extends Entity> entityClass = EntityList.getClassFromID(entityId);
+
+            if (entityClass != null) {
+                entityIdMap.put(entityId, entityClass);
+            }
+        }
     }
 
     @SubscribeEvent
@@ -72,14 +79,15 @@ public class EntityUpdateOptimizer {
     }
 
     private boolean shouldOptimizeEntity(Entity entity) {
-        int entityId = EntityList.getEntityID(entity);
+        int entityId = EntityRegistry.findGlobalUniqueEntityId();
 
         if (entityIdMap.containsKey(entityId)) {
-            String blacklistEntityName = (String) entityIdMap.get(entityId);
+            Class<? extends Entity> entityClass = entityIdMap.get(entityId);
+            String entityName = EntityList.getEntityString(entity);
 
-            if (entity instanceof EntityLiving) {
+            if (entityName != null && entity instanceof EntityLiving) {
                 for (String blacklistId : ECCFeccfConfig.entityBlacklistIds) {
-                    if (blacklistId.equals(blacklistEntityName)) {
+                    if (blacklistId.equals(entityName)) {
                         return false;
                     }
                 }
@@ -90,7 +98,6 @@ public class EntityUpdateOptimizer {
 
         return false;
     }
-
 
     @SubscribeEvent
     public void onServerTick(TickEvent.ServerTickEvent event) {
@@ -121,13 +128,13 @@ public class EntityUpdateOptimizer {
         EntityRegistry.EntityRegistration registration = EntityRegistry.instance()
             .lookupModSpawn(entity.getClass(), true);
         if (registration != null) {
-            IChunkProvider chunkProvider = worldServer.getChunkProvider();
-            Chunk chunk = chunkProvider.provideChunk(chunkPos.x, chunkPos.z);
+            Chunk chunk = worldServer.getChunkFromBlockCoords(chunkPos.x, chunkPos.z);
 
             if (chunk != null) {
                 chunk.removeEntity(entity);
                 worldServer.getEntityTracker()
                     .removeEntityFromAllTrackingPlayers(entity);
+                chunk.setChunkModified(); // Mettre à jour le chunk
             }
         }
     }
@@ -142,13 +149,15 @@ public class EntityUpdateOptimizer {
         int chunkX = chunkPos.x;
         int chunkZ = chunkPos.z;
 
-        Chunk chunk = world.getChunkFromChunkCoords(chunkX, chunkZ);
+        Chunk chunk = world.getChunkFromBlockCoords(chunkX, chunkZ);
         if (chunk != null) {
             int entityCount = 0;
 
-            for (Object entity : chunk.entityLists[0]) {
-                if (entity instanceof Entity) {
-                    entityCount++;
+            for (List<Entity> entityList : chunk.entityLists) {
+                for (Entity entity : entityList) {
+                    if (entity != null) {
+                        entityCount++;
+                    }
                 }
             }
 
@@ -158,23 +167,10 @@ public class EntityUpdateOptimizer {
     }
 
     private void unloadAndReloadChunk(ChunkPos chunkPos, WorldServer world) {
-
-        ChunkProviderServer provider = (ChunkProviderServer) world.getChunkProvider();
-
         int x = chunkPos.x;
         int z = chunkPos.z;
 
-        if (provider.chunkExists(x, z)) {
-
-            Chunk chunk = provider.provideChunk(x, z);
-
-            if (chunk != null) {
-                chunk.onChunkUnload();
-            }
-
-            provider.loadChunk(x, z);
-
-        }
-
+        world.getChunkProvider()
+            .loadChunk(x, z);
     }
 }
