@@ -19,7 +19,7 @@ public class ECCFMixinPlugin implements IMixinPlugin {
 
     public ECCFMixinPlugin() {
         try {
-            ConfigurationManager.registerConfig(ECCFeccfConfig.class);
+            ConfigurationManager.initialize(ECCFeccfConfig.class);
         } catch (ConfigException e) {
             throw new RuntimeException(e);
         }
